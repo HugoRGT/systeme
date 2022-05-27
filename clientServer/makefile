@@ -1,7 +1,6 @@
 CC = gcc -Wall
 
 all:server client test_cli test_serv
-	$(export LD_LIBRARY_PATH=$(pwd))
 	rm -f *.o
 server: server.o libmessage.so
 	$(CC) -L${PWD} server.o -lmessage -o server
@@ -28,9 +27,6 @@ test_serv.o: server.c
 
 test_cli.o: test_cli.c
 	$(CC) -D__EXTENSIONS__ test_cli.c  -c -o test_cli.o
-
-
-
 
 
 message.o :message.c message.h

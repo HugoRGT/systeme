@@ -47,13 +47,13 @@ int send_argv(int fd, char *argv[]){
 char **recv_argv(int fd){
   size_t len;
   read(fd,&len,sizeof(ssize_t));
-  printf("received argv len : %zu\n",len);
+  //printf("received argv len : %zu\n",len);
 
   char **tab=calloc(len+1,sizeof(char*));//allocate +1 for NULL
 
   for(size_t i = 0; i<len;i++){
     tab[i]=recv_string(fd);
-    printf("'%s'\n",tab[i]);
+    //printf("'%s'\n",tab[i]);
   }
 
   tab[len]=NULL;//Add NULL at the end

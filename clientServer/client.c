@@ -89,8 +89,6 @@ int main(int argc, char **argv){
   }
   fread(&server_pid,sizeof(pid_t),1,fp);
   fclose(fp);
-  printf("server pid is :%d\n",server_pid);
-  printf("Sending Sigusr1 to server of pid : %d\n",server_pid);
 
   kill(server_pid,SIGUSR1);
 
@@ -111,30 +109,28 @@ int main(int argc, char **argv){
   argv++;
   send_argv(pipe_fd,argv);
   close(pipe_fd);
-  printf("Here \n");
   pause();
   if(usr1_receive){
     usr1_receive = 0;
     fprintf(stderr,"RECEIVED SIGNAL SIGUSR1\n");
-    fprintf(stderr,"opening fifo pipes..\n");
     int fd_0 = open(cli_fifo0,O_WRONLY);
     int fd_1 = open(cli_fifo1,O_RDONLY);
     if (fd_1 <0 || fd_0 <0){fprintf(stderr, "An error occured\n");return 1;}
-    fprintf(stderr,"Success\nNow launching game\n");
     argv[0]=game_path;
-    int ret = dup2(fd_0,3);
-    if (ret == -1){
-      perror("dup2");
-      return 1;
-
-    }
-    ret = dup2(fd_1,4);
-    if (ret == -1){
-      perror("dup2");
-      return 1;
-    }
-
-
+    // int ret = dup2(fd_0,3);
+    // if (ret == -1){
+    //   perror("dup2");
+    //   return 1;
+    // }
+    // close(fd_0);
+    // ret = dup2(fd_1,4);
+    // if (ret == -1){
+    //   perror("dup2");
+    //   return 1;
+    // }
+    // close(fd_1);
+    dup2(fd_0,3);
+    dup2(fd_1,4);
     //printf("Execve argv0 : %s argv1 : %s\n",argv[0],argv[1]);
     if (!execvp(argv[0],&argv[0])){
       perror("execvp");

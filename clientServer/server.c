@@ -16,6 +16,7 @@
 volatile int usr1_receive = 0;
 volatile int usr2_receive = 0;
 volatile int sigint_receive = 0;
+volatile int sigchld_receive = 0;
 
 
 struct child_node{
@@ -28,7 +29,7 @@ struct child_node{
 
 int file_exists(char *path,int flag){
   if( access( path, flag ) != -1){
-    printf("%s is found\n",path);
+    //printf("%s is found\n",path);
     return 1;
   }
   printf("%s is not found\n",path);
@@ -50,7 +51,6 @@ int dir_exists(char *path){
 
 
 
-
 void handler(int sig){
   if (sig == SIGUSR1){
     usr1_receive = 1;
@@ -61,29 +61,37 @@ void handler(int sig){
   if (sig == SIGINT){
     sigint_receive = 1;
   }
+  if (sig == SIGCHLD){
+    sigchld_receive++;
+  }
   return;
 }
 
 
+void delete_tmp_files(struct child_node *rem){
+  char path[BUFSIZE];
+  sprintf(path,"/tmp/game_server/cli%d_0.fifo",rem->client_pid);
+  if (remove(path)<0){perror("remove");}
+  sprintf(path,"/tmp/game_server/cli%d_1.fifo",rem->client_pid);
+  if (remove(path)<0){perror("remove");}
+  return;
+
+}
 
 void kill_childs(struct child_node *first){
-  printf("KILL\n");
+  int status;
   if (first->pid == 0){
     free(first);
+    return;
   }
-  char path[BUFSIZE];
   struct child_node *curr = first;
   struct child_node *tmp = curr;
   while (curr != NULL){
     tmp = curr->next;
-    printf("child pid : %d\n",curr->pid);
+    printf("Kill child pid : %d\n",curr->pid);
     kill(curr->pid,SIGTERM);
-    waitpid(curr->pid,NULL,0);
-    sprintf(path,"/tmp/game_server/cli%d_0.fifo",curr->client_pid);
-    //printf("removing : %s\n",path);
-    remove(path);
-    sprintf(path,"/tmp/game_server/cli%d_1.fifo",curr->client_pid);
-    remove(path);
+    waitpid(curr->pid,&status,0);
+    delete_tmp_files(curr);
     free(curr);
     curr = tmp;
   }
@@ -101,9 +109,43 @@ void pid_list_print(struct child_node *first){
   }
 }
 
+void free_argv(char **argv){
+  if (argv == NULL){return;}
+  int i = 0;
+  char *curr = argv[i];
+  //printf("freeing argv\n");
+  while(curr!=NULL){
+    //printf("freeing %s\n",curr);
+    free(curr);
+    i++;
+    curr = argv[i];
+  }
+}
+int pid_list_remove(struct child_node *first, pid_t rem){
+  if (first->pid == rem){
+    delete_tmp_files(first);
+    first->pid = 0;
+    return 1;
+  }
+  pid_list_print(first);
+  printf("attempt to remove pid %d\n",rem);
+  struct child_node *curr = first;
+  struct child_node *anchor = curr;
+  while(curr != NULL){
+    curr=curr->next;
+    if (curr != NULL && curr->pid == rem){
+      anchor ->next = curr->next;
+      delete_tmp_files(curr);
+      free(curr);
+      return 1;
+    }
+    anchor = curr;
+  }
+  return 0;
+}
 
 void pid_list_append(struct child_node *first,pid_t pid,pid_t client){
-  printf("Adding %d to list\n",pid);
+  //printf("Adding %d to list\n",pid);
 
   if (first->pid ==0){
     first->pid = pid;
@@ -120,7 +162,7 @@ void pid_list_append(struct child_node *first,pid_t pid,pid_t client){
     curr = curr->next;
   }
   curr->next = new;
-  printf("Done\n");
+  //printf("Done\n");
 
 }
 
@@ -173,11 +215,15 @@ int main(){
     perror("sigaction");
     exit(1);
   }
-
+  if (sigaction(SIGCHLD,&action , NULL) == -1){
+    perror("sigaction");
+    exit(1);
+  }
 
   char **cli_argv = NULL;
   char *cli_pid_str = NULL;
   int pipe_fd;
+  int status;
   struct child_node *pid_list = calloc(1,sizeof(struct child_node));
 
 
@@ -191,26 +237,26 @@ int main(){
       }
       cli_pid_str = recv_string(pipe_fd);
       cli_argv = recv_argv(pipe_fd);
-  //childs
       close(pipe_fd);
       pid_t cli_pid = (pid_t) atoi(cli_pid_str);
       char cli_fifo0[BUFSIZE]; //cli_0.fifo path
       char cli_fifo1[BUFSIZE]; //cli_01fifo path
-      char game_str[BUFSIZE+8]; //game_file_path (+8 for the '_serv part' )
+      char game_str[BUFSIZE+8];//game_file_path (+8 for the '_serv part' )
       sprintf(cli_fifo0,"/tmp/game_server/cli%d_0.fifo",cli_pid);
       sprintf(cli_fifo1,"/tmp/game_server/cli%d_1.fifo",cli_pid);
-      printf("client pid : %d, path : %s\n",cli_pid,cli_fifo0);
+      //printf("client pid : %d, path : %s\n",cli_pid,cli_fifo0);
 
       sprintf(game_str,"%s/%s_serv",cwd,cli_argv[0]);
+      free(cli_argv[0]);
       cli_argv[0]=game_str;
 
       mkfifo(cli_fifo0,0666);
       mkfifo(cli_fifo1,0666); //create client pipes
       if (!file_exists(game_str,X_OK)){
         kill(cli_pid,SIGUSR2);
-        printf("Inalid game name\n");
+        printf("Inalid game name '%s'\n",game_str);
       }else{
-        printf("Game is ok\n");
+        //printf("Game is ok\n");
         kill(cli_pid,SIGUSR1); //tell client the pipes are ready
 
         pid_t child = fork(); //fork child process
@@ -223,26 +269,33 @@ int main(){
 
 
         if (child == 0){
-          fprintf(stderr,"Opening fifo pipes..\n");
+          //fprintf(stderr,"Opening fifo pipes..\n");
           int fd_0 = open(cli_fifo0,O_RDONLY);
           int fd_1 = open(cli_fifo1,O_WRONLY);
+          if (fd_1 <0 || fd_0 <0){fprintf(stderr, "An error occured\n");continue;}
           int ret = dup2(fd_0,0);
           if (ret == -1){
             perror("dup2");
             continue;
           }
+          close(fd_0);
+
           ret = dup2(fd_1,1);
           if (ret == -1){
             perror("dup2");
             continue;
           }
+          close(fd_1);
 
-          printf("exec : %s\n",cli_argv[0]);
+          //printf("exec : %s\n",cli_argv[0]);
           execvp(game_str,cli_argv);
           perror("execvp");
+          exit(1);
         }else{
           pid_list_append(pid_list,child,cli_pid);
-          pid_list_print(pid_list);
+          free_argv(&cli_argv[1]);
+          free(cli_argv);
+          free(cli_pid_str);
         }
 
       }
@@ -260,9 +313,15 @@ int main(){
       printf("\nRECEIVED SIGINT\n");
       remove("/tmp/game_server.pid");
       kill_childs(pid_list);
-      if(cli_argv !=NULL){free(cli_argv);}
-      if(cli_pid_str!=NULL){free(cli_pid_str);}
       return 1;
+    }
+    if(sigchld_receive){
+      printf("\nRECEIVED SIGCHLD\n");
+      sigchld_receive--;
+
+      pid_t term_child = waitpid(-1,&status,0);
+      printf("Result of remove : %d\n",pid_list_remove(pid_list,term_child));
+
     }
 
   }
